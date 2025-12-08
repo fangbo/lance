@@ -79,6 +79,7 @@ pub mod scanner;
 mod schema_evolution;
 pub mod sql;
 pub mod statistics;
+pub mod stats;
 mod take;
 pub mod transaction;
 pub mod udtf;
