@@ -27,33 +27,33 @@ use object_store::path::Path;
 use crate::Dataset;
 
 /// Returns the `_stats` directory path for the given dataset.
-pub(crate) fn colstats_dir(dataset: &Dataset) -> Path {
+pub fn colstats_dir(dataset: &Dataset) -> Path {
     // Use base.child("_stats") similar to indices_dir/data_dir
     dataset.base.child("_stats")
 }
 
 /// Resolves fragment-level column statistics file path.
 /// Format: `_stats/colstats_frag_{frag_id}_{field_id}.lance`
-pub(crate) fn fragment_colstats_path(dataset: &Dataset, frag_id: u64, field_id: u32) -> Path {
+pub fn fragment_colstats_path(dataset: &Dataset, frag_id: u64, field_id: u32) -> Path {
     let filename = format!("colstats_frag_{}_{}.lance", frag_id, field_id);
     colstats_dir(dataset).child(filename.as_str())
 }
 
 /// Resolves dataset-level column statistics file path.
 /// Format: `_stats/colstats_ds_{version_id}_{field_id}.lance`
-pub(crate) fn dataset_colstats_path(dataset: &Dataset, version_id: u64, field_id: u32) -> Path {
+pub fn dataset_colstats_path(dataset: &Dataset, version_id: u64, field_id: u32) -> Path {
     let filename = format!("colstats_ds_{}_{}.lance", version_id, field_id);
     colstats_dir(dataset).child(filename.as_str())
 }
 
 /// Write a fragment-level statistics record batch to `_stats`.
-pub(crate) async fn write_fragment_colstats(
+pub async fn write_fragment_colstats(
     dataset: &Dataset,
     frag_id: u64,
-    _field_id: u32,
+    field_id: u32,
     rb: RecordBatch,
 ) -> Result<()> {
-    let path = fragment_colstats_path(dataset, frag_id, _field_id);
+    let path = fragment_colstats_path(dataset, frag_id, field_id);
     let schema = lance_core::datatypes::Schema::try_from(rb.schema().as_ref())?;
     let opts = FileWriterOptions {
         format_version: Some(dataset.manifest.data_storage_format.lance_file_version()?),
@@ -67,7 +67,7 @@ pub(crate) async fn write_fragment_colstats(
 }
 
 /// Read a fragment-level statistics record batch from `_stats`.
-pub(crate) async fn read_fragment_colstats(
+pub async fn read_fragment_colstats(
     dataset: &Dataset,
     frag_id: u64,
     field_id: u32,
@@ -116,7 +116,7 @@ pub(crate) async fn read_fragment_colstats(
 }
 
 /// Write a dataset-level statistics record batch to `_stats`.
-pub(crate) async fn write_dataset_colstats(
+pub async fn write_dataset_colstats(
     dataset: &Dataset,
     version_id: u64,
     field_id: u32,
@@ -135,7 +135,7 @@ pub(crate) async fn write_dataset_colstats(
 }
 
 /// Read a dataset-level statistics record batch from `_stats`.
-pub(crate) async fn read_dataset_colstats(
+pub async fn read_dataset_colstats(
     dataset: &Dataset,
     version_id: u64,
     field_id: u32,

@@ -94,38 +94,38 @@ macro_rules! hll_extend_binary {
 impl HLLState {
     fn new(dt: &DataType) -> Option<Self> {
         match dt {
-            DataType::UInt8 => Some(HLLState::U8(HyperLogLog::new())),
-            DataType::UInt16 => Some(HLLState::U16(HyperLogLog::new())),
-            DataType::UInt32 => Some(HLLState::U32(HyperLogLog::new())),
-            DataType::UInt64 => Some(HLLState::U64(HyperLogLog::new())),
-            DataType::Int8 => Some(HLLState::I8(HyperLogLog::new())),
-            DataType::Int16 => Some(HLLState::I16(HyperLogLog::new())),
-            DataType::Int32 => Some(HLLState::I32(HyperLogLog::new())),
-            DataType::Int64 => Some(HLLState::I64(HyperLogLog::new())),
+            DataType::UInt8 => Some(Self::U8(HyperLogLog::new())),
+            DataType::UInt16 => Some(Self::U16(HyperLogLog::new())),
+            DataType::UInt32 => Some(Self::U32(HyperLogLog::new())),
+            DataType::UInt64 => Some(Self::U64(HyperLogLog::new())),
+            DataType::Int8 => Some(Self::I8(HyperLogLog::new())),
+            DataType::Int16 => Some(Self::I16(HyperLogLog::new())),
+            DataType::Int32 => Some(Self::I32(HyperLogLog::new())),
+            DataType::Int64 => Some(Self::I64(HyperLogLog::new())),
 
-            DataType::Utf8 => Some(HLLState::Str(HyperLogLog::new())),
-            DataType::LargeUtf8 => Some(HLLState::LStr(HyperLogLog::new())),
-            DataType::Utf8View => Some(HLLState::Str(HyperLogLog::new())),
-            DataType::Binary => Some(HLLState::Bin(HyperLogLog::new())),
-            DataType::LargeBinary => Some(HLLState::LBin(HyperLogLog::new())),
+            DataType::Utf8 => Some(Self::Str(HyperLogLog::new())),
+            DataType::LargeUtf8 => Some(Self::LStr(HyperLogLog::new())),
+            DataType::Utf8View => Some(Self::Str(HyperLogLog::new())),
+            DataType::Binary => Some(Self::Bin(HyperLogLog::new())),
+            DataType::LargeBinary => Some(Self::LBin(HyperLogLog::new())),
             _ => None,
         }
     }
     fn to_bytes(&self) -> Vec<u8> {
         match self {
-            HLLState::U8(h) => h.to_bytes(),
-            HLLState::U16(h) => h.to_bytes(),
-            HLLState::U32(h) => h.to_bytes(),
-            HLLState::U64(h) => h.to_bytes(),
-            HLLState::I8(h) => h.to_bytes(),
-            HLLState::I16(h) => h.to_bytes(),
-            HLLState::I32(h) => h.to_bytes(),
-            HLLState::I64(h) => h.to_bytes(),
+            Self::U8(h) => h.to_bytes(),
+            Self::U16(h) => h.to_bytes(),
+            Self::U32(h) => h.to_bytes(),
+            Self::U64(h) => h.to_bytes(),
+            Self::I8(h) => h.to_bytes(),
+            Self::I16(h) => h.to_bytes(),
+            Self::I32(h) => h.to_bytes(),
+            Self::I64(h) => h.to_bytes(),
 
-            HLLState::Str(h) => h.to_bytes(),
-            HLLState::LStr(h) => h.to_bytes(),
-            HLLState::Bin(h) => h.to_bytes(),
-            HLLState::LBin(h) => h.to_bytes(),
+            Self::Str(h) => h.to_bytes(),
+            Self::LStr(h) => h.to_bytes(),
+            Self::Bin(h) => h.to_bytes(),
+            Self::LBin(h) => h.to_bytes(),
         }
     }
     // Use the HyperLogLog::count() method (with parentheses) to avoid resolving to
@@ -133,19 +133,19 @@ impl HLLState {
     // to compute distinct counts from the accumulated hll_state.
     fn count(&self) -> u64 {
         match self {
-            HLLState::U8(h) => h.count() as u64,
-            HLLState::U16(h) => h.count() as u64,
-            HLLState::U32(h) => h.count() as u64,
-            HLLState::U64(h) => h.count() as u64,
-            HLLState::I8(h) => h.count() as u64,
-            HLLState::I16(h) => h.count() as u64,
-            HLLState::I32(h) => h.count() as u64,
-            HLLState::I64(h) => h.count() as u64,
+            Self::U8(h) => h.count() as u64,
+            Self::U16(h) => h.count() as u64,
+            Self::U32(h) => h.count() as u64,
+            Self::U64(h) => h.count() as u64,
+            Self::I8(h) => h.count() as u64,
+            Self::I16(h) => h.count() as u64,
+            Self::I32(h) => h.count() as u64,
+            Self::I64(h) => h.count() as u64,
 
-            HLLState::Str(h) => h.count() as u64,
-            HLLState::LStr(h) => h.count() as u64,
-            HLLState::Bin(h) => h.count() as u64,
-            HLLState::LBin(h) => h.count() as u64,
+            Self::Str(h) => h.count() as u64,
+            Self::LStr(h) => h.count() as u64,
+            Self::Bin(h) => h.count() as u64,
+            Self::LBin(h) => h.count() as u64,
         }
     }
     fn extend(&mut self, dt: &DataType, array: &ArrayRef) {
