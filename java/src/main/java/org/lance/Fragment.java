@@ -26,6 +26,7 @@ import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.util.Preconditions;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 import java.util.Arrays;
 import java.util.List;
@@ -150,16 +151,28 @@ public class Fragment {
    * @return the fragment metadata and new schema.
    */
   public FragmentMergeResult mergeColumns(ArrowArrayStream stream, String leftOn, String rightOn) {
-    return nativeMergeColumns(
-        dataset, fragmentMetadata.getId(), stream.memoryAddress(), leftOn, rightOn);
+    try (ArrowSchema ffiArrowSchema = ArrowSchema.allocateNew(dataset.allocator())) {
+      FragmentMetadata metadata =
+          nativeMergeColumns(
+              dataset,
+              fragmentMetadata.getId(),
+              stream.memoryAddress(),
+              leftOn,
+              rightOn,
+              ffiArrowSchema.memoryAddress());
+
+      Schema schema = Data.importSchema(dataset.allocator(), ffiArrowSchema, null);
+      return new FragmentMergeResult(metadata, schema);
+    }
   }
 
-  private native FragmentMergeResult nativeMergeColumns(
+  private native FragmentMetadata nativeMergeColumns(
       Dataset dataset,
       long fragmentId,
       long arrowStreamMemoryAddress,
       String leftOn,
-      String rightOn);
+      String rightOn,
+      long schemaMemoryAddress);
 
   /**
    * Update existed columns into this Fragment, will return the new fragment with the same

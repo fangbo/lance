@@ -14,10 +14,10 @@
 package org.lance.fragment;
 
 import org.lance.FragmentMetadata;
-import org.lance.schema.LanceSchema;
 
 import com.google.common.base.MoreObjects;
 import org.apache.arrow.c.ArrowArrayStream;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 /**
  * Result of {@link org.lance.Fragment#mergeColumns(ArrowArrayStream, String, String)
@@ -25,14 +25,14 @@ import org.apache.arrow.c.ArrowArrayStream;
  */
 public class FragmentMergeResult {
   private final FragmentMetadata fragmentMetadata;
-  private final LanceSchema schema;
+  private final Schema schema;
 
-  public FragmentMergeResult(FragmentMetadata fragmentMetadata, LanceSchema schema) {
+  public FragmentMergeResult(FragmentMetadata fragmentMetadata, Schema schema) {
     this.fragmentMetadata = fragmentMetadata;
     this.schema = schema;
   }
 
-  public LanceSchema getSchema() {
+  public Schema getSchema() {
     return schema;
   }
 

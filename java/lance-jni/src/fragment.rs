@@ -11,12 +11,12 @@ use jni::{
     sys::{jint, jlong},
     JNIEnv,
 };
-use lance::datatypes::Schema;
 use lance::table::format::{DataFile, DeletionFile, DeletionFileType, Fragment, RowIdMeta};
 use lance_io::utils::CachedFileSize;
 use std::iter::once;
 
 use lance::dataset::fragment::FileFragment;
+use lance_core::datatypes::Schema;
 use lance_datafusion::utils::StreamingWriteSource;
 
 use crate::error::{Error, Result};
@@ -28,12 +28,6 @@ use crate::{
     utils::extract_write_params,
     RT,
 };
-
-#[derive(Debug, Clone)]
-pub(crate) struct FragmentMergeResult {
-    fragment: Fragment,
-    schema: Schema,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct FragmentUpdateResult {
@@ -332,6 +326,7 @@ pub extern "system" fn Java_org_lance_Fragment_nativeMergeColumns<'a>(
     arrow_array_stream_addr: jlong, // memoryAddress of ArrowStream
     left_on: JString,               // left column name to join on
     right_on: JString,              // right column name to join on
+    arrow_schema_addr: jlong,       // memoryAddress of arrow Schema
 ) -> JObject<'a> {
     ok_or_throw_with_return!(
         env,
@@ -341,7 +336,8 @@ pub extern "system" fn Java_org_lance_Fragment_nativeMergeColumns<'a>(
             fragment_id,
             arrow_array_stream_addr,
             left_on,
-            right_on
+            right_on,
+            arrow_schema_addr
         ),
         JObject::null()
     )
@@ -355,6 +351,7 @@ fn inner_merge_column<'local>(
     arrow_array_stream_addr: jlong,
     left_on: JString,
     right_on: JString,
+    arrow_schema_addr: jlong,
 ) -> Result<JObject<'local>> {
     let (fragment_opt, max_field_id) = {
         let dataset =
@@ -378,13 +375,13 @@ fn inner_merge_column<'local>(
     let left_on_str: String = left_on.extract(env)?;
     let right_on_str: String = right_on.extract(env)?;
 
-    let (new_frag, new_schema) =
+    let (new_frag, new_schema): (Fragment, Schema) =
         RT.block_on(fragment.merge_columns(reader, &left_on_str, &right_on_str, max_field_id))?;
-    let result = FragmentMergeResult {
-        fragment: new_frag,
-        schema: new_schema,
-    };
-    result.into_java(env)
+
+    let ffi_schema = FFI_ArrowSchema::try_from(&arrow_schema::Schema::from(&new_schema))?;
+    unsafe { std::ptr::write_unaligned(arrow_schema_addr as *mut FFI_ArrowSchema, ffi_schema) }
+
+    new_frag.into_java(env)
 }
 
 #[no_mangle]
@@ -456,26 +453,8 @@ const FRAGMENT_METADATA_CLASS: &str = "org/lance/FragmentMetadata";
 const FRAGMENT_METADATA_CONSTRUCTOR_SIG: &str ="(ILjava/util/List;Ljava/lang/Long;Lorg/lance/fragment/DeletionFile;Lorg/lance/fragment/RowIdMeta;)V";
 const ROW_ID_META_CLASS: &str = "org/lance/fragment/RowIdMeta";
 const ROW_ID_META_CONSTRUCTOR_SIG: &str = "(Ljava/lang/String;)V";
-const FRAGMENT_MERGE_RESULT_CLASS: &str = "org/lance/fragment/FragmentMergeResult";
-const FRAGMENT_MERGE_RESULT_CONSTRUCTOR_SIG: &str =
-    "(Lorg/lance/FragmentMetadata;Lorg/lance/schema/LanceSchema;)V";
 const FRAGMENT_UPDATE_RESULT_CLASS: &str = "org/lance/fragment/FragmentUpdateResult";
 const FRAGMENT_UPDATE_RESULT_CONSTRUCTOR_SIG: &str = "(Lorg/lance/FragmentMetadata;[J)V";
-
-impl IntoJava for &FragmentMergeResult {
-    fn into_java<'a>(self, env: &mut JNIEnv<'a>) -> Result<JObject<'a>> {
-        let java_fragment_meta_data = self.fragment.into_java(env)?;
-        let java_lance_schema = self.schema.clone().into_java(env)?;
-        Ok(env.new_object(
-            FRAGMENT_MERGE_RESULT_CLASS,
-            FRAGMENT_MERGE_RESULT_CONSTRUCTOR_SIG,
-            &[
-                JValueGen::Object(&java_fragment_meta_data),
-                JValueGen::Object(&java_lance_schema),
-            ],
-        )?)
-    }
-}
 
 impl IntoJava for &FragmentUpdateResult {
     fn into_java<'a>(self, env: &mut JNIEnv<'a>) -> Result<JObject<'a>> {
