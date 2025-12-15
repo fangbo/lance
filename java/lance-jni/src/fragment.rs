@@ -11,12 +11,12 @@ use jni::{
     sys::{jint, jlong},
     JNIEnv,
 };
+use lance::datatypes::Schema;
 use lance::table::format::{DataFile, DeletionFile, DeletionFileType, Fragment, RowIdMeta};
 use lance_io::utils::CachedFileSize;
 use std::iter::once;
 
 use lance::dataset::fragment::FileFragment;
-use lance_core::datatypes::Schema;
 use lance_datafusion::utils::StreamingWriteSource;
 
 use crate::error::{Error, Result};
