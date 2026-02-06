@@ -13,7 +13,12 @@
  */
 package org.lance.schema;
 
+import org.lance.JniLoader;
+
 import com.google.common.base.MoreObjects;
+import org.apache.arrow.c.ArrowSchema;
+import org.apache.arrow.c.Data;
+import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import java.util.Collections;
@@ -22,6 +27,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 public class LanceSchema {
+  static {
+    JniLoader.ensureLoaded();
+  }
+
   private final List<LanceField> fields;
   private final Map<String, String> metadata;
 
@@ -72,4 +81,14 @@ public class LanceSchema {
       return new LanceSchema(fields, metadata);
     }
   }
+
+  public static LanceSchema from(BufferAllocator allocator, Schema schema) {
+    try (ArrowSchema arrowSchema = ArrowSchema.allocateNew(allocator)) {
+      Data.exportSchema(allocator, schema, null, arrowSchema);
+      long schemaAddr = arrowSchema.memoryAddress();
+      return nativeFromArrowSchema(schemaAddr);
+    }
+  }
+
+  private static native LanceSchema nativeFromArrowSchema(long schemaAddr);
 }

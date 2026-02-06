@@ -5,11 +5,35 @@ use crate::error::{Error, Result};
 use crate::traits::IntoJava;
 use crate::utils::to_java_map;
 use arrow::datatypes::DataType;
+use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::{TimeUnit, UnionFields};
 use jni::objects::{JObject, JValue};
-use jni::sys::{jboolean, jint};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 use lance_core::datatypes::{Field, Schema};
+
+#[no_mangle]
+pub extern "system" fn Java_org_lance_schema_LanceSchema_nativeFromArrowSchema<'local>(
+    mut env: JNIEnv<'local>,
+    _obj: JObject,
+    arrow_schema_addr: jlong,
+) -> JObject<'local> {
+    ok_or_throw!(
+        env,
+        inner_from_arrow_schema_addr(&mut env, arrow_schema_addr)
+    )
+}
+
+pub fn inner_from_arrow_schema_addr<'local>(
+    env: &mut JNIEnv<'local>,
+    arrow_schema_addr: jlong,
+) -> Result<JObject<'local>> {
+    let c_schema_ptr = arrow_schema_addr as *mut FFI_ArrowSchema;
+    let c_schema = unsafe { FFI_ArrowSchema::from_raw(c_schema_ptr) };
+    let arrow_schema = arrow_schema::Schema::try_from(&c_schema)?;
+    let schema = Schema::try_from(&arrow_schema)?;
+    schema.into_java(env)
+}
 
 impl IntoJava for Schema {
     fn into_java<'local>(self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>> {
