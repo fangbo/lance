@@ -222,6 +222,7 @@ public class OpenDatasetBuilder {
     options.getVersion().ifPresent(optionsBuilder::setVersion);
     options.getBlockSize().ifPresent(optionsBuilder::setBlockSize);
     options.getSerializedManifest().ifPresent(optionsBuilder::setSerializedManifest);
+    options.getSession().ifPresent(optionsBuilder::setSession);
 
     Map<String, String> storageOptions = new HashMap<>(options.getStorageOptions());
     if (namespaceStorageOptions != null) {
