@@ -33,7 +33,7 @@ impl Dispatcher {
             .spawn(move || {
                 // Attach ONCE and never detach - this is the key optimization
                 let mut env = jvm
-                    .attach_current_thread_permanently()
+                    .attach_current_thread_as_daemon()
                     .expect("Failed to attach dispatcher to JVM");
 
                 log::info!("JNI dispatcher thread started");
