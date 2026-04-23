@@ -18,6 +18,7 @@ import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
 import org.lance.ReadOptions;
+import org.lance.Session;
 import org.lance.Transaction;
 import org.lance.WriteParams;
 import org.lance.namespace.errors.ErrorCode;
@@ -399,6 +400,39 @@ public class DirectoryNamespaceTest {
           "Expected managedVersioning=true, got " + descResp.getManagedVersioning());
     } finally {
       trackingNs.close();
+    }
+  }
+
+  @Test
+  void testOpenDatasetBuilderSetsSessionFromReadOptions() throws Exception {
+    // Create parent namespace
+    CreateNamespaceRequest createNsReq =
+        new CreateNamespaceRequest().id(Arrays.asList("workspace"));
+    namespaceClient.createNamespace(createNsReq);
+
+    // Create a table
+    byte[] tableData = createTestTableData();
+    CreateTableRequest createReq =
+        new CreateTableRequest().id(Arrays.asList("workspace", "test_table"));
+    namespaceClient.createTable(createReq, tableData);
+
+    try (Session session = Session.builder().build()) {
+      ReadOptions readOptions = new ReadOptions.Builder().setSession(session).build();
+
+      try (Dataset dataset =
+          Dataset.open()
+              .allocator(allocator)
+              .namespaceClient(namespaceClient)
+              .tableId(Arrays.asList("workspace", "test_table"))
+              .readOptions(readOptions)
+              .build()) {
+        Session datasetSession = dataset.session();
+        assertNotNull(datasetSession);
+        assertTrue(datasetSession.isSameAs(session));
+      }
+
+      // The provided session should not be closed when the dataset is closed.
+      assertFalse(session.isClosed());
     }
   }
 
