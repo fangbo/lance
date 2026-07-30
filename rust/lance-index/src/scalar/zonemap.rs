@@ -36,7 +36,10 @@ use arrow_schema::{DataType, Field};
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion_common::ScalarValue;
 use lance_select::RowAddrTreeMap;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use super::{AnyQuery, IndexStore, MetricsCollector, ScalarIndex, SearchResult};
 use crate::scalar::RowIdRemapper;
@@ -199,6 +202,49 @@ impl ZoneMapIndex {
             }
         }
         Some((min?.clone(), max?.clone()))
+    }
+
+    /// Conservative `[min, max]` folded per fragment across this segment's zones.
+    ///
+    /// Fragments whose zones do not have a finite bound are omitted. If any zone in a
+    /// fragment has a NaN max, that fragment is omitted because no sound finite upper
+    /// bound exists without scanning.
+    pub fn fragment_ranges(&self) -> HashMap<u64, (ScalarValue, ScalarValue)> {
+        let mut ranges = HashMap::new();
+        let mut invalid_fragments = HashSet::new();
+        for zone in &self.zones {
+            if Self::scalar_is_nan(&zone.max) {
+                ranges.remove(&zone.bound.fragment_id);
+                invalid_fragments.insert(zone.bound.fragment_id);
+                continue;
+            }
+            if invalid_fragments.contains(&zone.bound.fragment_id) {
+                continue;
+            }
+            if !Self::scalar_is_finite_bound(&zone.min) || !Self::scalar_is_finite_bound(&zone.max)
+            {
+                continue;
+            }
+
+            let entry = ranges
+                .entry(zone.bound.fragment_id)
+                .or_insert_with(|| (zone.min.clone(), zone.max.clone()));
+            if zone
+                .min
+                .partial_cmp(&entry.0)
+                .is_some_and(|ordering| ordering.is_lt())
+            {
+                entry.0 = zone.min.clone();
+            }
+            if zone
+                .max
+                .partial_cmp(&entry.1)
+                .is_some_and(|ordering| ordering.is_gt())
+            {
+                entry.1 = zone.max.clone();
+            }
+        }
+        ranges
     }
 
     /// A scalar usable as a global-range bound: non-null and, for floats, non-NaN.

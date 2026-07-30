@@ -98,7 +98,7 @@ use super::{WriteMode, WriteParams, cleanup_data_fragments, write_fragments_inte
 use crate::Dataset;
 use crate::Result;
 use crate::dataset::utils::CapturedRowIds;
-use crate::index::DatasetIndexExt;
+use crate::index::{DatasetIndexExt, DatasetIndexInternalExt};
 use crate::io::commit::{commit_transaction, migrate_fragments};
 use arrow::array::AsArray;
 use arrow::datatypes::{UInt8Type, UInt32Type, UInt64Type};
@@ -107,6 +107,7 @@ use arrow_array::RecordBatch;
 use arrow_array::StructArray;
 use arrow_array::builder::{LargeBinaryBuilder, PrimitiveBuilder, StringBuilder};
 use arrow_buffer::NullBuffer;
+use datafusion::common::ScalarValue;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt};
@@ -116,6 +117,8 @@ use lance_core::utils::tokio::get_num_compute_intensive_cpus;
 use lance_core::utils::tracing::{DATASET_COMPACTING_EVENT, TRACE_DATASET_EVENTS};
 use lance_index::frag_reuse::{FRAG_REUSE_INDEX_NAME, FragReuseGroup};
 use lance_index::is_system_index;
+use lance_index::metrics::NoOpMetricsCollector;
+use lance_index::scalar::zonemap::ZoneMapIndex;
 use lance_table::format::{Fragment, RowIdMeta};
 use roaring::{RoaringBitmap, RoaringTreemap};
 use serde::{Deserialize, Serialize};
@@ -685,6 +688,11 @@ pub struct DefaultCompactionPlanner {
     options: CompactionOptions,
 }
 
+#[derive(Debug, Clone)]
+struct ZoneMapFragmentRange {
+    fragment_ranges: HashMap<u64, (ScalarValue, ScalarValue)>,
+}
+
 impl DefaultCompactionPlanner {
     pub fn new(mut options: CompactionOptions) -> Self {
         options.validate();
@@ -721,6 +729,7 @@ impl CompactionPlanner for DefaultCompactionPlanner {
             })
             .buffered(dataset.object_store.as_ref().io_parallelism());
 
+        let zone_map_ranges = load_zonemap_fragment_ranges(dataset).await?;
         let index_fragmaps = load_index_fragmaps(dataset).await?;
         let indices_containing_frag = |frag_id: u32| {
             index_fragmaps
@@ -777,7 +786,13 @@ impl CompactionPlanner for DefaultCompactionPlanner {
                 (Some(candidacy), Some(bin)) => {
                     // We cannot mix "indexed" and "non-indexed" fragments and so we only consider
                     // the existing bin if it contains the same indices
-                    if bin.indices == indices {
+                    if bin.indices == indices
+                        && should_keep_bin_adjacent_by_zonemap(
+                            &zone_map_ranges,
+                            bin.fragments.last(),
+                            &fragment,
+                        )
+                    {
                         // Add to current bin
                         bin.fragments.push(fragment);
                         bin.pos_range.end += 1;
@@ -837,6 +852,122 @@ impl CompactionPlanner for DefaultCompactionPlanner {
 
         Ok(compaction_plan)
     }
+}
+
+fn should_keep_bin_adjacent_by_zonemap(
+    zone_map_ranges: &[ZoneMapFragmentRange],
+    left_fragment: Option<&Fragment>,
+    right_fragment: &Fragment,
+) -> bool {
+    let Some(left_fragment) = left_fragment else {
+        return true;
+    };
+
+    for zone_map in zone_map_ranges {
+        let Some((left_min, left_max)) = zone_map.fragment_ranges.get(&(left_fragment.id as u64))
+        else {
+            continue;
+        };
+        let Some((right_min, right_max)) =
+            zone_map.fragment_ranges.get(&(right_fragment.id as u64))
+        else {
+            continue;
+        };
+
+        if right_max
+            .partial_cmp(left_min)
+            .is_some_and(|ord| ord.is_lt())
+        {
+            return false;
+        }
+        if left_max
+            .partial_cmp(right_min)
+            .is_some_and(|ord| ord.is_lt())
+            && !scalar_values_are_adjacent(left_max, right_min)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn scalar_values_are_adjacent(left: &ScalarValue, right: &ScalarValue) -> bool {
+    use datafusion::common::ScalarValue as SV;
+
+    match (left, right) {
+        (SV::Int8(Some(l)), SV::Int8(Some(r))) => i16::from(*r) - i16::from(*l) == 1,
+        (SV::Int16(Some(l)), SV::Int16(Some(r))) => i32::from(*r) - i32::from(*l) == 1,
+        (SV::Int32(Some(l)), SV::Int32(Some(r))) => i64::from(*r) - i64::from(*l) == 1,
+        (SV::Int64(Some(l)), SV::Int64(Some(r))) => *r - *l == 1,
+        (SV::UInt8(Some(l)), SV::UInt8(Some(r))) => i16::from(*r) - i16::from(*l) == 1,
+        (SV::UInt16(Some(l)), SV::UInt16(Some(r))) => i32::from(*r) - i32::from(*l) == 1,
+        (SV::UInt32(Some(l)), SV::UInt32(Some(r))) => i64::from(*r) - i64::from(*l) == 1,
+        (SV::UInt64(Some(l)), SV::UInt64(Some(r))) => *r == *l + 1,
+        (SV::Date32(Some(l)), SV::Date32(Some(r))) => i64::from(*r) - i64::from(*l) == 1,
+        (SV::Date64(Some(l)), SV::Date64(Some(r))) => *r - *l == 1,
+        (SV::Time32Second(Some(l)), SV::Time32Second(Some(r))) => {
+            i64::from(*r) - i64::from(*l) == 1
+        }
+        (SV::Time32Millisecond(Some(l)), SV::Time32Millisecond(Some(r))) => {
+            i64::from(*r) - i64::from(*l) == 1
+        }
+        (SV::Time64Microsecond(Some(l)), SV::Time64Microsecond(Some(r))) => *r - *l == 1,
+        (SV::Time64Nanosecond(Some(l)), SV::Time64Nanosecond(Some(r))) => *r - *l == 1,
+        (SV::TimestampSecond(Some(l), lt), SV::TimestampSecond(Some(r), rt)) if lt == rt => {
+            *r - *l == 1
+        }
+        (SV::TimestampMillisecond(Some(l), lt), SV::TimestampMillisecond(Some(r), rt))
+            if lt == rt =>
+        {
+            *r - *l == 1
+        }
+        (SV::TimestampMicrosecond(Some(l), lt), SV::TimestampMicrosecond(Some(r), rt))
+            if lt == rt =>
+        {
+            *r - *l == 1
+        }
+        (SV::TimestampNanosecond(Some(l), lt), SV::TimestampNanosecond(Some(r), rt))
+            if lt == rt =>
+        {
+            *r - *l == 1
+        }
+        _ => false,
+    }
+}
+
+async fn load_zonemap_fragment_ranges(dataset: &Dataset) -> Result<Vec<ZoneMapFragmentRange>> {
+    let indices = dataset.load_indices().await?;
+    let mut ranges = Vec::new();
+
+    for index in indices.iter() {
+        if is_system_index(index) || index.fields.len() != 1 {
+            continue;
+        }
+
+        let Some(index_details) = index.index_details.as_ref() else {
+            continue;
+        };
+        if !index_details.type_url.ends_with("ZoneMapIndexDetails") {
+            continue;
+        }
+
+        let field_id = *index.fields.first().unwrap();
+        let field_path = dataset.schema().field_path(field_id)?;
+        let index = dataset
+            .open_generic_index(&field_path, &index.uuid, &NoOpMetricsCollector)
+            .await?;
+        let Some(zone_map) = index.as_any().downcast_ref::<ZoneMapIndex>() else {
+            continue;
+        };
+
+        let fragment_ranges = zone_map.fragment_ranges();
+        if !fragment_ranges.is_empty() {
+            ranges.push(ZoneMapFragmentRange { fragment_ranges });
+        }
+    }
+
+    Ok(ranges)
 }
 
 /// Compacts the files in the dataset without reordering them.
@@ -2546,6 +2677,78 @@ mod tests {
         };
         let plan = plan_compaction(&dataset, &options).await.unwrap();
         assert_eq!(plan.tasks().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_plan_compaction_breaks_bins_on_zonemap_value_discontinuity() {
+        let test_dir = TempStrDir::default();
+        let test_uri = &test_dir;
+        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, false)]));
+
+        let make_batch = |values: Vec<i64>| {
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(Int64Array::from(values)) as ArrayRef],
+            )
+            .unwrap()
+        };
+
+        let first = make_batch(vec![0, 1, 2, 3]);
+        let second = make_batch(vec![4, 5, 6, 7]);
+        let third = make_batch(vec![100, 101, 102, 103]);
+
+        let mut dataset = Dataset::write(
+            RecordBatchIterator::new(vec![Ok(first)], schema.clone()),
+            test_uri,
+            Some(WriteParams {
+                max_rows_per_file: 4,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+
+        for batch in [second, third] {
+            dataset = Dataset::write(
+                RecordBatchIterator::new(vec![Ok(batch)], schema.clone()),
+                test_uri,
+                Some(WriteParams {
+                    max_rows_per_file: 4,
+                    mode: WriteMode::Append,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let zonemap_params = ScalarIndexParams::for_builtin(BuiltinIndexType::ZoneMap);
+        dataset
+            .create_index(
+                &["a"],
+                IndexType::ZoneMap,
+                Some("a_zm".into()),
+                &zonemap_params,
+                false,
+            )
+            .await
+            .unwrap();
+
+        let options = CompactionOptions {
+            target_rows_per_fragment: 16,
+            ..Default::default()
+        };
+        let plan = plan_compaction(&dataset, &options).await.unwrap();
+
+        assert_eq!(plan.tasks().len(), 1);
+        assert_eq!(
+            plan.tasks()[0]
+                .fragments
+                .iter()
+                .map(|fragment| fragment.id)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     #[tokio::test]
